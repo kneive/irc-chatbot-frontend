@@ -1,0 +1,77 @@
+// get user info [uname]
+// get user info [uid]
+
+    // msg-structure unclear
+
+get users
+
+    msg-structure: <username> : <uid>
+
+get users [room] [from] [to]
+
+    msg-structure: <username> : <message>
+
+get messages [uname] [from] [to]
+get messages [uid] [from] [to]
+get messages [room] [from] [to]
+get messages [uname] [room] [from] [to]
+get messages [uid] [room] [from] [to]
+get messages [uname] [room] [from] [to]
+get messages [uid] [room] [from] [to]
+
+    msg-structure: <timestamp> <room> <username> : <message>
+
+get subs [room] [from] [to]
+get subs [uname] [room] [from] [to]
+get subs [uid] [room] [from] [to]
+
+    msg-structure: <timestamp> <username> <room> : <type>
+
+get gift [uname] [from] [to]
+get gift [uid] [from] [to]
+get gift [room] [from] [to]
+get gift [uname] [room] [from] [to]
+get gift [uid] [room] [from] [to]
+
+    msg-structure: <timestamp> <username> <room> : <type> <amount>
+
+get announcement [uname] [from] [to]
+get announcement [uid] [from] [to]
+get announcement [room] [from] [to]
+get announcement [uname] [room] [from] [to]
+get announcement [uid] [room] [from] [to]
+
+    msg-structure: <timestamp> <username> <room> : <system-message>
+
+get bits [uname] [from] [to]
+get bits [uid] [from] [to]
+get bits [room] [from] [to]
+get bits [uname] [room] [from] [to]
+get bits [uid] [room] [from] [to]
+    
+    msg-structure: <timestamp> <username> <room> : <amount>
+
+get payforward [uname] [from] [to]
+get payforward [uid] [from] [to]
+get payforward [uname] [room] [from] [to]
+get payforward [uid] [room] [from] [to]
+get paidupgrade [uname] [from] [to]
+get paidupgrade [uid] [from] [to]
+get paidupgrade [uname] [room] [from] [to]
+get paidupgrade [uid] [room] [from] [to]
+
+    msg-structure: <timestamp> <username> <room> : <type> <recipient>
+
+get onetapgift [uname] [from] [to]
+get onetapgift [uid] [from] [to]
+get onetapgift [uname] [room] [from] [to]
+get onetapgift [uid] [room] [from] [to]
+
+    msg-structure: <timestamp> <username> <room> : <type>
+
+help
+    msg-structure: <command> : <syntax> <description> // (list for all commands)
+
+help [cmd]
+
+    msg-structure: <command> : <syntax> <description>

@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import 'TerminalView.css';
+import './TerminalView.css';
 
 function TerminalView(){
     const [entries, setEntries] = useState([]);
     const [query, setQuery] = useState('');
-    const [loadiing, setLoading] = useState(false);
+    const [loading, setLoading] = useState(false);
     const terminalRef = useRef(null);
 
     // Auto-scroll to the bottom when entries are added
     useEffect(() => {
-        if (tertminalRef.current) {
+        if (terminalRef.current) {
             terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
         }
     }, [entries]);
@@ -29,6 +29,141 @@ function TerminalView(){
         }
     };
 
+    const renderFormattedData = (data, format) => {
+        switch(format){
+            case 'user-list':
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="username">{item.username}</span>
+                        {' : '}
+                        <span className="uid">{item.uid}</span>
+                    </div>
+                ));
+            case 'message-list':
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="timestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' : '}
+                        <span className="message">{item.message}</span>
+                    </div>
+                ));
+            case 'sub-list':
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="timestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' : '}
+                        <span className="type">{item.type}</span>
+                    </div>
+                ));
+
+            case 'gift-list':
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="timestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' : '}
+                        <span className="type">{item.type}</span>
+                        {' '}
+                        <span className="amount">{item.amount}</span>
+                    </div>
+                ));
+            case "announcement-list":
+                return data.map((item, i) => {
+                    <div key={i}>
+                        <span className="timestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' : '}
+                        <span className="system-message">{item.systemMessage}</span>
+                    </div>
+                });
+            case "bits-list":
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="timestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' : '}
+                        <span className="amount">{item.amount}</span>
+                    </div>
+                ));
+            case "payforward-list":
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="timestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' : '}
+                        <span className="type">{item.type}</span>
+                        {' '}
+                        <span className="recipient">{item.recipient}</span>
+                    </div>
+                ));
+            case "paidupgrade-list":
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="rtimestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' : '}
+                        <span className="type">{item.type}</span>
+                        {' '}
+                        <span className="recipient">{item.recipient}</span>
+                    </div>
+                ));
+            case "onetapgift-list":
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="timestamp">{item.timestamp}</span>
+                        {' '}
+                        <span className="username">{item.username}</span>
+                        {' '}
+                        <span className="room">{item.room}</span>
+                        {' : '}
+                        <span className="type">{item.type}</span>
+                    </div>
+                ));
+            case "help-all":
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <span className="command">{item.command}</span>
+                        {' : '}
+                        <span className="syntax">{item.syntax}</span>
+                        {' - '}
+                        <span className="description">{item.description}</span>
+                    </div>
+                ));
+            case "help-single":
+                return data.map((item, i) => (
+                    <div key={i}>
+                        <div><span className="label">Syntax:</span>{item.syntax}</div>
+                        <div><span className="label">Description:</span>{item.description}</div>
+                    </div>
+                ));
+            default:
+                return <pre>{JSON.stringify(data, null, 2)}</pre>
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!query.trim()) return;
@@ -38,22 +173,60 @@ function TerminalView(){
         setEntries(prev => [...prev, { type: 'query', text: `> ${query}`}]);
 
         try {
-            const response = await fetch('api/query', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query})
-            });
+            const command = query.trim().toLowerCase();
+            const parts = command.split(' ');
+            const cmd = parts.slice(0, 2).join(' ');
+            const args = parts.slice(2);
 
-            const result = await response.json();
+            let result;
 
-            // Add results to terminal output
+            switch(cmd){
+                case 'get user':
+                    result = await handleGetUser(args);
+                    break;
+                case 'get users':
+                    result = await handleGetUsers(args);
+                    break;
+                case 'get messages':
+                    result = await handleGetMessages(args);
+                    break;
+                case 'get subs':
+                    result = await handleGetSubs(args);
+                    break;
+                case 'get gift':
+                    result = await handleGetGift(args);
+                    break;
+                case 'get announcement':
+                    result = await handleGetAnnouncement(args);
+                    break;
+                case 'get bits':
+                    result = await handleGetBits(args);
+                    break;
+                case 'get payforward':
+                    result = await handleGetPayforward(args);
+                    break;
+                case 'get paidupgrade':
+                    result = await handleGetPaidupgrade(args);
+                    break;
+                case 'get onetapgift':
+                    result = await handleGetOnetapgift(args);
+                    break;
+                case 'help':
+                    result = await handleHelp(args);
+                    break;
+                default:
+                    throw new Error(`Unknown command: ${cmd}`);
+            }
+
             setEntries(prev => [...prev, {
                 type: 'result',
-                text: JSON.stringify(result,null,2),
+                data: result.data,
+                format: result.format,
                 timestamp: new Date().toISOString()
             }]);
 
             setQuery('');
+
         } catch (error) {
             setEntries(prev => [...prev, {
                 type: 'error',
@@ -71,23 +244,248 @@ function TerminalView(){
         }
     };
 
+    const handleGetUsers = async (args) => {
+        const [room, from, to] = args;
+
+        const data =[
+            { username1: '', uid: 1000 },
+            { username2: '', uid: 1001}
+
+        ]
+
+        return {
+            data: data,
+            format: 'user-list'
+        };
+    };
+
+    const handleGetMessages = async (args) => {
+        const [firstArg, ...rest] = args;
+
+        const data = [
+            { 
+                timestamp: '2026-01-15T10:30:00Z', 
+                room: 'room1', 
+                username: 'username1', 
+                message: 'Message1' 
+            },
+            {
+                timestamp: '2026-01-15T10:31:00Z',
+                room: 'room2',
+                username: 'username2',
+                message: 'Message2'
+            }
+        ];
+
+        return {
+            data: data,
+            format: 'message-list'
+        };
+    };
+
+    const handleGetSubs = async (args) => {
+        const data = [
+            {
+                timestamp: '2026-01-15T10:30:00Z',
+                username: 'username1',
+                room: 'room1',
+                type: 'tier'
+            }
+        ];
+
+        return {
+            data: data,
+            format: 'sub-list'
+        };
+    };
+
+    const handleGetGift = async (args) => {
+        const data = [
+            {
+                timestamp: '2026-01-15T10:30:00Z',
+                username: 'username1',
+                room: 'room1',
+                type: 'gift',
+                amount: 5
+            }
+        ];
+        return {
+            data: data,
+            format: 'gift-list'
+        };
+    };
+
+    const handleGetAnnouncement = async (args) => {
+        const data = [
+            {
+                timestamp: '2026-01-15T10:30:00Z',
+                username: 'username1',
+                room: 'room1',
+                systemMessage: 'System message'
+            }
+        ];
+
+        return {
+            data: data,
+            format: 'announcement-list'
+        };
+    };
+
+    const handleGetBits = async (args) => {
+        const data = [
+            {
+                timestamp: '2026-01-15T10:30:00Z',
+                username: 'username1',
+                room: 'room1',
+                amount: 5
+            }
+        ];
+
+        return {
+            data: data,
+            format: 'bits-list'
+        };
+    };
+
+    const handleGetPayforward = async (args) => {
+        const data = [
+            {
+                timestamp: '2026-01-15T10:30:00Z',
+                username: 'username1',
+                room: 'room1',
+                type: 'communityPayforward',
+                recipient: 'username2'
+            }
+        ];
+
+        return {
+            data: data,
+            format: 'payforward-list'
+        };
+    };
+
+    const handleGetPaidupgrade = async (args) => {
+        const data = [
+            {
+                timestamp: '2026-01-15T10:30:00Z',
+                username: 'username1',
+                room: 'room1',
+                type: 'paidUpgrade',
+                recipient: 'username2'
+            }
+        ];
+
+        return {
+            data: data,
+            format: 'paidupgrade-list'
+        };
+    };
+
+    const handleGetOnetapgift = async (args) => {
+        const data = [
+            {
+                timestamp: '2026-01-15T10:30:00Z',
+                username: 'username1',
+                room: 'room1',
+                type: 'tier',
+            }
+        ];
+
+        return {
+            data: data,
+            format: 'onetapgift-list'
+        };
+    };
+
+    const handleHelp = (args) => {
+        const commands = {
+            'get users': {
+                syntax: 'get users [room] [from] [to]',
+                description: ''
+            },
+            'get messages': {
+                syntax: 'get messages [uname|uid|room] [room] [from] [to]',
+                description: ''
+            },
+            'get subs': {
+                syntax: 'get subs [room|uname|uid] [room] [from] [to]',
+                description: '' 
+            },
+            'get gift': {
+                syntax: 'get gift [uname|uid|room] [room] [from] [to]',
+                description: ''
+            },
+            'get announcement': {
+                syntax: 'get announcement [uname|uid|room] [room] [from] [to]',
+                description: ''
+            },
+            'get bits': {
+                syntax: 'get bits [uname|uid|room] [room] [from] [to]',
+                description: ''
+            },
+            'get payforward': {
+                syntax: 'get payforward [uname|uid|room] [from] [to]',
+                description: ''
+            },
+            'get paidupgrade': {
+                syntax: 'get paidupgrade [uname|uid] [room] [from] [to]',
+                description: ''
+            },
+            'get onetapgift': {
+                syntax: 'get onetapgift [uname|uid] [room] [from] [to]',
+                description: ''
+            },
+            'help': {
+                syntax: 'help [cmd]',
+                description: ''
+            }
+        };
+
+        if (args.length > 0) {
+            const cmd = args.join(' ');
+            const cmdInfo = commands[cmd]
+            if(cmdInfo){
+                return {
+                    data: [cmdInfo],
+                    format: 'help-single'
+                };
+            } else {
+                throw new Error(`Unknown command: ${cmd}`);
+            }
+        } else {
+            return {
+                data: Object.entries(commands).map(([cmd, info]) => ({
+                    command: cmd,
+                    ...info
+                })),
+                format: 'help-all'
+            };
+        }
+    };
+
     return (
         <div className="terminal-container">
             <div className="terminal-output" ref={terminalRef}>
                 {entries.map((entry, index) => (
-                    <div key={index} classname={`terminal-line ${entry.type}`}>
+                    <div key={index} className={`terminal-line ${entry.type}`}>
                         {entry.timestamp && (
                             <span className="timestamp">[{new Date(entry.timestamp).toLocaleTimeString()}]</span>
                         )}
-                        <pre>{entry.text}</pre>
+                        {entry.data ? (
+                            <div>
+                                {renderFormattedData(entry.data, entry.format)}
+                            </div>
+                        ) : (
+                            <pre>{entry.text}</pre>
+                        )}
                     </div>
                 ))}
                 {loading && <div className="terminal-line loading">Loading...</div>}
             </div>
 
             <form onSubmit={handleSubmit} className="terminal-input-form">
-                <div classname="input-wrapper">
-                    <span className="prompt">$</span>
+                <div className="input-wrapper">
+                    <span className="prompt">»</span>
                     <input
                         type="text"
                         value={query}

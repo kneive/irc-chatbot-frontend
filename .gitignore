@@ -1,5 +1,11 @@
+.*/
+
 # test-server
 salt*/
 
 # notes
 *.note
+
+# files
+xplanation.md
+bugz.md
