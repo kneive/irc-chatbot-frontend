@@ -1,18 +1,33 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import './TerminalView.css';
+
+const TerminalInput = React.memo(({ query, setQuery, handleSubmit, handleKeyDown, loading }) => {
+    return (
+        <form onSubmit={handleSubmit} className="terminal-input-form">
+            <div className="input-wrapper">
+                <span className="prompt">»</span>
+                    <input
+                        type="text"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Enter command"
+                        className="terminal-input"
+                        disabled={loading}
+                        autoComplete="off"
+                    />
+            </div>
+        </form>
+    );
+});
 
 function TerminalView(){
     const [entries, setEntries] = useState([]);
     const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
-    const terminalRef = useRef(null);
+    const parentRef = useRef(null);
 
-    // Auto-scroll to the bottom when entries are added
-    useEffect(() => {
-        if (terminalRef.current) {
-            terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-        }
-    }, [entries]);
 
     // Fetch initial data
     useEffect(() => {
@@ -21,13 +36,55 @@ function TerminalView(){
 
     const fetchEntries = async () => {
         try {
-            const response = await fetch('api/entries');
+            const response = await fetch('/api/');
+
+            if (!response.ok){
+                console.warn(`API returned status ${response.status}`);
+                setEntries([]);
+                return;
+            }
+
             const data = await response.json();
-            setEntries(data);
+
+            console.log('API Info:', data);
+            setEntries([{
+                type: 'info',
+                text: `Connected to ${data.message} v${data.version}`,
+                timestamp: new Date().toISOString()
+            }]);
+
         } catch (error) {
             console.error('Error fetching entries:', error);
+            setEntries([]);
         }
     };
+
+    const virtualizer = useVirtualizer({
+        count: entries.length,
+        getScrollElement: () => parentRef.current,
+        estimateSize: (index) => {
+            const entry = entries[index];
+            if (entry?.data) {
+                return Math.max(50, entry.data.length * 30 + 20);
+            }
+            return 50;
+        },
+        overscan: 5,
+        measureElement: (el) => el?.getBoundingClientRect().height,
+    });
+
+    const virtualItems = useMemo(() => virtualizer.getVirtualItems(), [virtualizer.getVirtualItems()]);
+    const totalSize = useMemo(() => virtualizer.getTotalSize(), [virtualizer.getTotalSize()]);
+
+    // Auto-scroll to the bottom when entries are added
+    useEffect(() => {
+        if (entries.length > 0) {
+            virtualizer.scrollToIndex(entries.length - 1, {
+                align: 'end',
+                behavior: 'smooth'
+            });
+        }
+    }, [entries.length, virtualizer]);
 
     const renderFormattedData = (data, format) => {
         switch(format){
@@ -79,7 +136,7 @@ function TerminalView(){
                     </div>
                 ));
             case "announcement-list":
-                return data.map((item, i) => {
+                return data.map((item, i) => (
                     <div key={i}>
                         <span className="timestamp">{item.timestamp}</span>
                         {' '}
@@ -89,7 +146,7 @@ function TerminalView(){
                         {' : '}
                         <span className="system-message">{item.systemMessage}</span>
                     </div>
-                });
+                ));
             case "bits-list":
                 return data.map((item, i) => (
                     <div key={i}>
@@ -164,7 +221,7 @@ function TerminalView(){
         }
     };
 
-    const handleSubmit = async (e) => {
+    const handleSubmit = useCallback(async (e) => {
         e.preventDefault();
         if (!query.trim()) return;
 
@@ -181,6 +238,10 @@ function TerminalView(){
             let result;
 
             switch(cmd){
+                case 'clear': 
+                    setEntries([]);
+                    setQuery('');
+                    return;
                 case 'get user':
                     result = await handleGetUser(args);
                     break;
@@ -235,14 +296,14 @@ function TerminalView(){
         } finally {
             setLoading(false);
         }
-    };
+    }, [query]);
 
-    const handleKeyDown = (e) => {
+    const handleKeyDown = useCallback((e) => {
         if (e.key === 'Enter' && !e.shiftKey){
             e.preventDefault();
             handleSubmit(e);
         }
-    };
+    }, [handleSubmit]);
 
     const handleGetUsers = async (args) => {
         const [room, from, to] = args;
@@ -260,27 +321,52 @@ function TerminalView(){
     };
 
     const handleGetMessages = async (args) => {
-        const [firstArg, ...rest] = args;
+        try {
+            const [firstArg, ...rest] = args;
 
-        const data = [
-            { 
-                timestamp: '2026-01-15T10:30:00Z', 
-                room: 'room1', 
-                username: 'username1', 
-                message: 'Message1' 
-            },
-            {
-                timestamp: '2026-01-15T10:31:00Z',
-                room: 'room2',
-                username: 'username2',
-                message: 'Message2'
+            const params = new URLSearchParams();
+
+            if(firstArg === 'uname' && rest[0]){
+                params.append('user-name', rest[0]);
+            } else if(firstArg === 'uid' && rest[0]){
+                params.append('user-id', rest[0]);
+            } else if(firstArg === 'room' && rest[0]){
+                params.append('room-name', rest[0]);
             }
-        ];
 
-        return {
-            data: data,
-            format: 'message-list'
-        };
+            // assumed order of dates: from to
+            const dateArgs = firstArg === 'uname' || firstArg === 'uid' || firstArg === 'room' ? rest.slice(1): args;
+
+            if(dateArgs.length >= 1 && dateArgs[0]){
+                params.append('start-date', dateArgs[0]);
+            }
+            if(dateArgs.length >= 2 && dateArgs[1]){
+                params.append('end-date', dateArgs[1]);
+            }
+
+            const response = await fetch(`/api/messages?${params.toString()}`);
+
+            if(!response.ok){
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to fetch messages');
+            }
+
+            const result = await response.json();
+
+            const data = result.messages.map(msg =>({ 
+                timestamp: msg.timestamp,
+                room: msg.room_name,
+                username: msg.display_name,
+                message: msg.msg_content
+            }));
+
+            return {
+                data: data,
+                format: 'message-list'
+            };
+        } catch (error) {
+            throw new Error(`Failed to get messages: ${error.message}`);
+        }
     };
 
     const handleGetSubs = async (args) => {
@@ -399,6 +485,10 @@ function TerminalView(){
 
     const handleHelp = (args) => {
         const commands = {
+            'clear': {
+                syntax: 'clear',
+                description: 'Clear the terminal screen'
+            },
             'get users': {
                 syntax: 'get users [room] [from] [to]',
                 description: ''
@@ -465,38 +555,64 @@ function TerminalView(){
 
     return (
         <div className="terminal-container">
-            <div className="terminal-output" ref={terminalRef}>
-                {entries.map((entry, index) => (
-                    <div key={index} className={`terminal-line ${entry.type}`}>
-                        {entry.timestamp && (
-                            <span className="timestamp">[{new Date(entry.timestamp).toLocaleTimeString()}]</span>
-                        )}
-                        {entry.data ? (
-                            <div>
-                                {renderFormattedData(entry.data, entry.format)}
+            <div
+                ref={parentRef}
+                className="terminal-output"
+                style={{
+                    height: '600px',
+                    overflow: 'auto'
+                }}
+            >    
+                <div
+                    style={{
+                        height: `${totalSize}px`,
+                        width: '100%',
+                        position: 'relative'
+                    }}
+                >
+                    {virtualItems.map((virtualItem)=>{
+                        const entry = entries[virtualItem.index];
+                        return (
+                            <div
+                                key={virtualItem.key}
+                                data-index={virtualItem.index}
+                                ref={virtualizer.measureElement}
+                                style={{
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    transform: `translateY(${virtualItem.start}px)`
+                                }}
+                                className={`terminal-line ${entry.type}`}
+                            >
+                                {entry.timestamp && (
+                                    <span className="timestamp">
+                                        [{new Date(entry.timestamp).toLocaleTimeString()}]
+                                    </span>
+                                )}
+                                {entry.data ? (
+                                    <div>
+                                        {renderFormattedData(entry.data, entry.format)}
+                                    </div>
+                                ) : (
+                                    <pre>{entry.text}</pre>
+                                )}
                             </div>
-                        ) : (
-                            <pre>{entry.text}</pre>
-                        )}
-                    </div>
-                ))}
-                {loading && <div className="terminal-line loading">Loading...</div>}
+                        );
+                    })}
+                </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="terminal-input-form">
-                <div className="input-wrapper">
-                    <span className="prompt">»</span>
-                    <input
-                        type="text"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="Enter SQL query or command"
-                        className="terminal-input"
-                        disabled={loading}
-                    />
-                </div>
-            </form>
+            {loading && <div className="terminal-line loading">Loading...</div>}
+
+            <TerminalInput
+                query={query}
+                setQuery={setQuery}
+                handleSubmit={handleSubmit}
+                handleKeyDown={handleKeyDown}
+                loading={loading}
+            />
         </div>
     );
 }

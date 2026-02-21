@@ -18,7 +18,7 @@
 
 .terminal-output {
     flex: 1;
-    overflow-y: auto;
+    overflow: auto;
     padding: 20px;
     background-color: #1e1e1e;
     scrollbar-width: thin;
@@ -39,8 +39,9 @@
 }
 
 .terminal-line {
+    padding: 4px 8px;
+    font-family: 'Courier New', monospace;
     margin-bottom: 8px;
-    line-height: 1.5;
 }
 
 .terminal-line.query {
