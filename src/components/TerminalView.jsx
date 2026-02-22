@@ -1,13 +1,19 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback} from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import './TerminalView.css';
+import { resumeToPipeableStream } from 'react-dom/server';
 
-const TerminalInput = React.memo(({ query, setQuery, handleSubmit, handleKeyDown, loading }) => {
+function isInteger(value){
+    return /^\d+$/.test(value);
+}
+
+const TerminalInput = React.memo(({ query, setQuery, handleSubmit, handleKeyDown, loading, inputRef }) => {
     return (
         <form onSubmit={handleSubmit} className="terminal-input-form">
             <div className="input-wrapper">
                 <span className="prompt">»</span>
                     <input
+                        ref={inputRef}
                         type="text"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
@@ -27,12 +33,21 @@ function TerminalView(){
     const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
     const parentRef = useRef(null);
+    // focus on input
+    const inputRef = useRef(null);
+    // history
+    const [commandHistory, setCommandHistory] = useState([]);
+    const [historyIndex, setHistoryIndex] = useState(-1);
 
 
-    // Fetch initial data
-    useEffect(() => {
-        fetchEntries();
-    }, []);
+
+    const [paginationState, setPaginationState] = useState({
+        hasMore: false,
+        isLoadingMore: false,
+        currentOffset: 0,
+        lastCommand: null,
+        lastArgs: null
+    });
 
     const fetchEntries = async () => {
         try {
@@ -62,19 +77,50 @@ function TerminalView(){
     const virtualizer = useVirtualizer({
         count: entries.length,
         getScrollElement: () => parentRef.current,
-        estimateSize: (index) => {
-            const entry = entries[index];
-            if (entry?.data) {
-                return Math.max(50, entry.data.length * 30 + 20);
-            }
-            return 50;
-        },
+        estimateSize: useCallback(() => 50, []),
         overscan: 5,
-        measureElement: (el) => el?.getBoundingClientRect().height,
+        measureElement: (element) => element.getBoundingClientRect().height,
     });
 
     const virtualItems = useMemo(() => virtualizer.getVirtualItems(), [virtualizer.getVirtualItems()]);
     const totalSize = useMemo(() => virtualizer.getTotalSize(), [virtualizer.getTotalSize()]);
+
+    // Fetch initial data
+    useEffect(() => {
+        fetchEntries();
+    }, []);
+
+    // focus on input
+    useEffect(() => {
+        if(inputRef.current){
+            inputRef.current.focus();
+        }
+    }, []);
+
+    useEffect(() => {
+        if(!loading && inputRef.current){
+            inputRef.current.focus();
+        }
+    }, [loading]);
+
+    // load command history
+    useEffect(() => {
+        const saved = localStorage.getItem('terminalHistory');
+        if(saved){
+            try {
+                setCommandHistory(JSON.parse(saved));
+            } catch (e) {
+                console.error('Failed to load history:', e);
+            }
+        }
+    }, []);
+
+    // save command history
+    useEffect(() => {
+        if (commandHistory.length > 0) {
+            localStorage.setItem('terminalHistory', JSON.stringify(commandHistory));
+        }
+    }, [commandHistory]);
 
     // Auto-scroll to the bottom when entries are added
     useEffect(() => {
@@ -86,58 +132,171 @@ function TerminalView(){
         }
     }, [entries.length, virtualizer]);
 
-    const renderFormattedData = (data, format) => {
-        switch(format){
-            case 'user-list':
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="username">{item.username}</span>
-                        {' : '}
-                        <span className="uid">{item.uid}</span>
-                    </div>
-                ));
-            case 'message-list':
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="timestamp">{item.timestamp}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' '}
-                        <span className="username">{item.username}</span>
-                        {' : '}
-                        <span className="message">{item.message}</span>
-                    </div>
-                ));
-            case 'sub-list':
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="timestamp">{item.timestamp}</span>
-                        {' '}
-                        <span className="username">{item.username}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' : '}
-                        <span className="type">{item.type}</span>
-                    </div>
-                ));
+    useEffect(() => {
+        const scrollElement = parentRef.current;
+        if (!scrollElement) return;
 
-            case 'gift-list':
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="timestamp">{item.timestamp}</span>
-                        {' '}
-                        <span className="username">{item.username}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' : '}
-                        <span className="type">{item.type}</span>
-                        {' '}
-                        <span className="amount">{item.amount}</span>
-                    </div>
-                ));
-            case "announcement-list":
-                return data.map((item, i) => (
-                    <div key={i}>
+        const handleScroll = () => {
+            const { scrollTop, scrollHeight, clientHeight } = scrollElement;
+            const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+            const threshold=200;
+
+            if (distanceFromBottom < threshold && paginationState.hasMore && !paginationState.isLoadingMore) {
+                loadMoreData();
+            }
+        };
+
+        scrollElement.addEventListener('scroll', handleScroll);
+        return () => scrollElement.removeEventListener('scroll', handleScroll);
+    }, [paginationState]);
+
+    useEffect(() => {
+        const handleResize = () => {
+            virtualizer.measure();
+        };
+
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, [virtualizer]);
+
+    const loadMoreData = async () => {
+        if (!paginationState.hasMore || paginationState.isLoadingMore) {
+            return;
+        }
+
+        setPaginationState(prev => ({ ... prev, isLoadingMore: true}));
+
+        try {
+            const nextOffset = paginationState.currentOffset + 500;
+
+            const result = await executeCommand(
+                paginationState.lastCommand,
+                paginationState.lastArgs,
+                nextOffset
+            );
+
+            if (result.data.length > 0) {
+                
+                const formattedItems = formatDataItems(result.data, result.format);
+                
+                setEntries(prev => [...prev, ...formattedItems]);
+
+                setPaginationState(prev => ({
+                    ...prev,
+                    currentOffset: nextOffset,
+                    hasMore: result.data.length === 500,
+                    isLoadingMore: false
+                }));
+            }
+        } catch (error) {
+            console.error('Error loading more data:', error);
+            setPaginationState(prev => ({ ...prev, isLoadingMore: false }));
+        }
+    };
+
+    const executeCommand = async (command, args, offset) => {
+        switch(command){
+            case 'get messages':
+                return await handleGetMessages(args, offset);
+            case 'get user':
+                return await handleGetUser(args);
+            case 'get users':
+                return await handleGetUsers(args, offset);
+            case 'get subs':
+                return await handleGetSubs(args, offset);
+            case 'get gifts':
+                return await handleGetGift(args, offset);
+            case 'get announcements':
+                return await handleGetAnnouncement(args, offset);
+            case 'get bits':
+                return await handleGetBits(args, offset);
+            case 'get payforward':
+                return await handleGetPayforward(args, offset);
+            case 'get paidupgrade':
+                return await handleGetPaidupgrade(args, offset);
+            case 'get onetapgift':
+                return await handleGetOnetapgift(args, offset);
+            case 'help':
+                return handleHelp(args);
+            default:
+                return { data: [], format: 'message-list' };
+        }
+    };
+
+    const formatDataItems = (data, format) => {
+        return data.flatMap((item, i) => {
+            let content;
+            let textLength = 0;
+
+            // formatted content
+            switch(format) {
+                case 'message-list':
+                    const messageText = `${item.timestamp} ${item.room} ${item.username} : ${item.message}`;
+                    textLength = messageText.length;
+                    content = (
+                        <>
+                            <span className="timestamp">{item.timestamp}</span>
+                            {' '}
+                            <span className="room">{item.room}</span>
+                            {' '}
+                            <span className="username">{item.username}</span>
+                            {' : '}
+                            <span className="message">{item.message}</span>
+                        </>
+                    );
+                    break;
+
+                case 'user-list':
+                    const userText = `${item.username} : ${item.uid}`;
+                    textLength = userText.length; 
+                    content = (
+                        <>
+                            <span className="username">{item.username}</span>
+                            {' : '}
+                            <span className="uid">{item.uid}</span>
+                        </>
+                    );
+                    break;
+
+                case 'sub-list':
+                    const subText = `${item.timestamp} ${item.username} ${item.room} : ${item.type}`;
+                    textLength = subText.length;
+                    content = (
+                        <>
+                            <span className="timestamp">{item.timestamp}</span>
+                            {' '}
+                            <span className="username">{item.username}</span>
+                            {' '}
+                            <span className="room">{item.room}</span>
+                            {' : '}
+                            <span className="type">{item.type}</span>
+                        </>
+                    );
+                    break;
+                
+                case 'gift-list':
+                    const giftText = `${item.timestamp} ${item.username} ${item.room} : ${item.type} ${item.amount}`;
+                    textLength = giftText.length;
+                    content = (
+                        <>
+                            <span className="timestamp">{item.timestamp}</span>
+                            {' '}
+                            <span className="username">{item.username}</span>
+                            {' '}
+                            <span className="room">{item.room}</span>
+                            {' : '}
+                            <span className="type">{item.type}</span>
+                            {' '}
+                            <span className="amount">{item.amount}</span>
+                        </>
+                    );
+                    break;
+
+                case 'announcement-list':
+                    const announcementText = `${item.timestamp} ${item.username} ${item.room} : ${item.systemMessage}`;
+                    textLength = announcementText.length;
+                    content = (
+                        <>
                         <span className="timestamp">{item.timestamp}</span>
                         {' '}
                         <span className="username">{item.username}</span>
@@ -145,80 +304,126 @@ function TerminalView(){
                         <span className="room">{item.room}</span>
                         {' : '}
                         <span className="system-message">{item.systemMessage}</span>
-                    </div>
-                ));
-            case "bits-list":
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="timestamp">{item.timestamp}</span>
-                        {' '}
-                        <span className="username">{item.username}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' : '}
-                        <span className="amount">{item.amount}</span>
-                    </div>
-                ));
-            case "payforward-list":
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="timestamp">{item.timestamp}</span>
-                        {' '}
-                        <span className="username">{item.username}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' : '}
-                        <span className="type">{item.type}</span>
-                        {' '}
-                        <span className="recipient">{item.recipient}</span>
-                    </div>
-                ));
-            case "paidupgrade-list":
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="rtimestamp">{item.timestamp}</span>
-                        {' '}
-                        <span className="username">{item.username}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' : '}
-                        <span className="type">{item.type}</span>
-                        {' '}
-                        <span className="recipient">{item.recipient}</span>
-                    </div>
-                ));
-            case "onetapgift-list":
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="timestamp">{item.timestamp}</span>
-                        {' '}
-                        <span className="username">{item.username}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' : '}
-                        <span className="type">{item.type}</span>
-                    </div>
-                ));
-            case "help-all":
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <span className="command">{item.command}</span>
-                        {' : '}
-                        <span className="syntax">{item.syntax}</span>
-                        {' - '}
-                        <span className="description">{item.description}</span>
-                    </div>
-                ));
-            case "help-single":
-                return data.map((item, i) => (
-                    <div key={i}>
-                        <div><span className="label">Syntax:</span>{item.syntax}</div>
-                        <div><span className="label">Description:</span>{item.description}</div>
-                    </div>
-                ));
-            default:
-                return <pre>{JSON.stringify(data, null, 2)}</pre>
-        }
+                        </>
+                    );
+                    break;
+
+                case 'bits-list':
+                    const bitsText = `${item.timestamp} ${item.username} ${item.room} : ${item.amount}`;
+                    textLength = bitsText.length;
+                    content = (
+                        <>
+                            <span className="timestamp">{item.timestamp}</span>
+                            {' '}
+                            <span className="username">{item.username}</span>
+                            {' '}
+                            <span className="room">{item.room}</span>
+                            {' : '}
+                            <span className="amount">{item.amount}</span>
+                        </>
+                    );
+                    break;
+
+                case 'payforward-list':
+                    const payforwardText = `${item.timestamp} ${item.username} ${item.room} : ${item.type} ${item.recipient}`;
+                    textLength = payforwardText.length;
+                    content = (
+                        <>
+                            <span className="timestamp">{item.timestamp}</span>
+                            {' '}
+                            <span className="username">{item.username}</span>
+                            {' '}
+                            <span className="room">{item.room}</span>
+                            {' : '}
+                            <span className="type">{item.type}</span>
+                            {' '}
+                            <span className="recipient">{item.recipient}</span>
+                        </>
+                    );
+                    break;
+
+                case 'paidupgrade-list':
+                    const paidupgradeText = `${item.timestamp} ${item.username} ${item.room} : ${item.type} ${item.recipient}`;
+                    textLength = paidupgradeText.length;
+                    content = (
+                        <>
+                            <span className="timestamp">{item.timestamp}</span>
+                            {' '}
+                            <span className="username">{item.username}</span>
+                            {' '}
+                            <span className="room">{item.room}</span>
+                            {' : '}
+                            <span className="type">{item.type}</span>
+                            {' '}
+                            <span className="recipient">{item.recipient}</span>
+                        </>
+                    );
+                    break;
+                
+                case 'onetapgift-list':
+                    const onetapgiftText = `${item.timestamp} ${item.username} ${item.room} : ${item.type}`;
+                    content = (
+                        <>
+                            <span className="timestamp">{item.timestamp}</span>
+                            {' '}
+                            <span className="username">{item.username}</span>
+                            {' '}
+                            <span className="room">{item.room}</span>
+                            {' : '}
+                            <span className="type">{item.type}</span>
+                        </>
+                    );
+                    break;
+
+                case 'help-all':
+                    const commandRow = ` ${item.command}`;
+                    const syntaxRow = `   Syntax: ${item.syntax}`;
+                    const descRow = `   Description: ${item.description}`;
+                    
+                    // Return array of 3 entries
+                    return [
+                        {
+                            type: 'result',
+                            content: <span className="help-command"> {item.command}</span>,
+                            textLength: commandRow.length,
+                            timestamp: new Date().toISOString()
+                        },
+                        {
+                            type: 'result',
+                            content: (
+                                <>
+                                    <span className="label">   Syntax: </span>
+                                    <span className="help-syntax">{item.syntax}</span>
+                                </>
+                            ),
+                            textLength: syntaxRow.length,
+                            timestamp: new Date().toISOString()
+                        },
+                        {
+                            type: 'result',
+                            content: (
+                                <>
+                                    <span className="label">   Description: </span>
+                                    <span className="help-description">{item.description}</span>
+                                </>
+                            ),
+                            textLength: descRow.length,
+                            timestamp: new Date().toISOString()
+                        }
+                    ];
+                    break;
+
+                default:
+                    content = <pre>{JSON.stringify(item, null, 2)}</pre>;
+            }
+            
+            return {
+                type: 'result',
+                content: content,
+                textLength: textLength,
+                timestamp: new Date().toISOString()
+            };
+        });
     };
 
     const handleSubmit = useCallback(async (e) => {
@@ -226,6 +431,15 @@ function TerminalView(){
         if (!query.trim()) return;
 
         setLoading(true);
+
+        // append command history
+        setCommandHistory(prev => {
+            if(prev[0] === query) {
+                return prev;
+            }
+            return [query, ...prev].slice(0,256);
+        });
+        setHistoryIndex(-1);
 
         setEntries(prev => [...prev, { type: 'query', text: `> ${query}`}]);
 
@@ -241,50 +455,143 @@ function TerminalView(){
                 case 'clear': 
                     setEntries([]);
                     setQuery('');
+                    setPaginationState({
+                        hasMore: false,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: null,
+                        lastArgs: null
+                    });
                     return;
+
                 case 'get user':
                     result = await handleGetUser(args);
+                    setPaginationState({
+                        hasMore: false,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: null,
+                        lastArgs: null
+                    });
                     break;
+
                 case 'get users':
-                    result = await handleGetUsers(args);
+                    result = await handleGetUsers(args, 0);
+                    setPaginationState({
+                        hasMore: false,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: null,
+                        lastArgs: null
+                    });
                     break;
+
                 case 'get messages':
-                    result = await handleGetMessages(args);
+                    result = await handleGetMessages(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get messages',
+                        lastArgs: args
+                    });
                     break;
+
                 case 'get subs':
-                    result = await handleGetSubs(args);
+                    result = await handleGetSubs(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get subs',
+                        lastArgs: args
+                    });
                     break;
-                case 'get gift':
-                    result = await handleGetGift(args);
+
+                case 'get gifts':
+                    result = await handleGetGift(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get gifts',
+                        lastArgs: args
+                    });
                     break;
-                case 'get announcement':
-                    result = await handleGetAnnouncement(args);
+
+                case 'get announcements':
+                    result = await handleGetAnnouncement(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get announcements',
+                        lastArgs: args
+                    });
                     break;
+
                 case 'get bits':
-                    result = await handleGetBits(args);
+                    result = await handleGetBits(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get bits',
+                        lastArgs: args
+                    });
                     break;
+
                 case 'get payforward':
-                    result = await handleGetPayforward(args);
+                    result = await handleGetPayforward(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get payforward',
+                        lastArgs: args
+                    });
                     break;
+
                 case 'get paidupgrade':
-                    result = await handleGetPaidupgrade(args);
+                    result = await handleGetPaidupgrade(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get paidupgrade',
+                        lastArgs: args
+                    });
                     break;
+
                 case 'get onetapgift':
-                    result = await handleGetOnetapgift(args);
+                    result = await handleGetOnetapgift(args, 0);
+                    setPaginationState({
+                        hasMore: result.data.length === 500,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: 'get onetapgift',
+                        lastArgs: args
+                    });
                     break;
+
                 case 'help':
                     result = await handleHelp(args);
+                    setPaginationState({
+                        hasMore: false,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: null,
+                        lastArgs: null
+                    });
                     break;
+
                 default:
                     throw new Error(`Unknown command: ${cmd}`);
             }
 
-            setEntries(prev => [...prev, {
-                type: 'result',
-                data: result.data,
-                format: result.format,
-                timestamp: new Date().toISOString()
-            }]);
+            const formattedItems = formatDataItems(result.data, result.format);
+
+            setEntries(prev => [...prev, ...formattedItems]);
 
             setQuery('');
 
@@ -302,47 +609,152 @@ function TerminalView(){
         if (e.key === 'Enter' && !e.shiftKey){
             e.preventDefault();
             handleSubmit(e);
+        } else if (e.key === 'ArrowUp'){
+            e.preventDefault();
+            if(commandHistory.length > 0){
+                const newIndex = Math.min(historyIndex +1, commandHistory.length - 1);
+                setHistoryIndex(newIndex);
+                setQuery(commandHistory[newIndex]);
+            }
+        } else if(e.key === 'ArrowDown'){
+            e.preventDefault();
+            if(historyIndex > 0){
+                const newIndex = historyIndex - 1;
+                setHistoryIndex(newIndex);
+                setQuery(commandHistory[newIndex]);
+            } else if (historyIndex === 0) {
+                setHistoryIndex(-1);
+                setQuery('');
+            }
         }
-    }, [handleSubmit]);
 
-    const handleGetUsers = async (args) => {
-        const [room, from, to] = args;
+    }, [handleSubmit, commandHistory, historyIndex]);
 
-        const data =[
-            { username1: '', uid: 1000 },
-            { username2: '', uid: 1001}
+    const handleGetUser = async (args) => {
+        try {        
+            const param = new URLSearchParams();
 
-        ]
+            if (args.length === 0) {
+                throw new Error('No user ID or username provided');
+            }
+            if (isInteger(args[0])){
+                param.append('user-id', args[0]);
+            } else {
+                param.append('user-name', args[0]);
+            }
 
-        return {
-            data: data,
-            format: 'user-list'
-        };
+            const response = await fetch(`/api/users/single?${param.toString()}`);
+
+            if(!response.ok){
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to fetch user');
+            }
+
+            const user = await response.json();
+
+            console.log('API Response:', user);
+
+            if (!user.display_name && user.user_id === 0){
+                throw new Error('User not found');
+            }
+
+            return {
+                data: [{
+                    username: user.display_name,
+                    uid: user.user_id
+                }],
+                format: 'user-list'
+            };
+
+        } catch (error){
+            throw new Error(`Failed to get user: ${error.message}`);
+        }
+
     };
 
-    const handleGetMessages = async (args) => {
+    const handleGetUsers = async (args, offset = 0) => {
         try {
-            const [firstArg, ...rest] = args;
+            const params = new URLSearchParams();
+
+            if(args.length > 0 && args[0]){
+                params.append('room-name', args[0]);
+            }
+
+            params.append('limit', '500');
+            params.append('offset', offset.toString());
+
+            const response = await fetch(`/api/users?${params.toString()}`);
+
+            if(!response.ok){
+                const error = await  response.json();
+                throw new Error(error.message || 'Failed to fetch users');
+            }
+
+            const result = await response.json();
+
+            console.log('API Response:', result);
+            console.log('Users count:', result.users?.length);
+
+            const data = result.users.map(user => ({
+                username: user.display_name,
+                uid: user.user_id
+            }));
+
+            console.log('Formatted data:', data);
+
+            return {
+                data: data,
+                format: 'user-list'
+            };
+
+        } catch (error) {
+            throw new Error(`Failed to get users: ${error.message}`);
+        }
+    };
+
+    const handleGetMessages = async (args, offset = 0) => {
+        try {
 
             const params = new URLSearchParams();
 
-            if(firstArg === 'uname' && rest[0]){
-                params.append('user-name', rest[0]);
-            } else if(firstArg === 'uid' && rest[0]){
-                params.append('user-id', rest[0]);
-            } else if(firstArg === 'room' && rest[0]){
-                params.append('room-name', rest[0]);
+            for (let i = 0; i < args.length; i++){
+                const arg = args[i];
+
+                if(arg === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-u' || arg === '--username'){
+                    if(args[i+1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-rid' || arg === '--room-id'){
+                    if(args[i+1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++
+                    }
+                } else if (arg === '--from'){
+                    if(args[i+1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '--to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
             }
 
-            // assumed order of dates: from to
-            const dateArgs = firstArg === 'uname' || firstArg === 'uid' || firstArg === 'room' ? rest.slice(1): args;
-
-            if(dateArgs.length >= 1 && dateArgs[0]){
-                params.append('start-date', dateArgs[0]);
-            }
-            if(dateArgs.length >= 2 && dateArgs[1]){
-                params.append('end-date', dateArgs[1]);
-            }
+            params.append('limit', '500');
+            params.append('offset', offset.toString());
 
             const response = await fetch(`/api/messages?${params.toString()}`);
 
@@ -353,12 +765,17 @@ function TerminalView(){
 
             const result = await response.json();
 
+            console.log('API Response:', result);
+            console.log('Messages count:', result.messages?.length);
+
             const data = result.messages.map(msg =>({ 
                 timestamp: msg.timestamp,
                 room: msg.room_name,
                 username: msg.display_name,
                 message: msg.msg_content
             }));
+
+            console.log('Formatted data:', data);
 
             return {
                 data: data,
@@ -369,71 +786,302 @@ function TerminalView(){
         }
     };
 
-    const handleGetSubs = async (args) => {
-        const data = [
-            {
-                timestamp: '2026-01-15T10:30:00Z',
-                username: 'username1',
-                room: 'room1',
-                type: 'tier'
-            }
-        ];
+    const handleGetSubs = async (args, offset = 0) => {
+        try {
+            const params = new URLSearchParams();
 
-        return {
-            data: data,
-            format: 'sub-list'
-        };
+            for(let i = 0; i < args.length; i++){
+                const arg = args[i];
+                if(arg === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-u' || arg === '--username'){
+                    if(args[i+1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-rid' || arg === '--room-id'){
+                    if(args[i+1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '--from'){
+                    if(args[i+1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '--to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
+            }
+
+            params.append('limit', '500');
+            params.append('offset', offset.toString());
+
+            const response = await fetch(`/api/subscriptions?${params.toString()}`);
+
+            if(!response.ok){
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to fetch subscriptions');
+            }
+
+            const result = await response.json();
+
+            console.log('API Response:', result);
+            console.log('Subscriptions count:', result.subscriptions?.length);
+
+            const data = result.subscriptions.map(sub => ({
+                timestamp: sub.timestamp,
+                username: sub.display_name,
+                room: sub.room_name,
+                type: sub.sub_plan
+            }));
+
+            console.log('Formatted data:', data);
+
+            return {
+                data: data,
+                format: 'sub-list'
+            };
+            
+        } catch (error) {
+            throw new Error(`Failed to get subs: ${error.message}`);
+        }
     };
 
-    const handleGetGift = async (args) => {
-        const data = [
-            {
-                timestamp: '2026-01-15T10:30:00Z',
-                username: 'username1',
-                room: 'room1',
-                type: 'gift',
-                amount: 5
+    const handleGetGift = async (args, offset = 0) => {
+        try {
+            const params = new URLSearchParams();
+
+            for(let i = 0; i<args.length; i++){
+                const arg = args[i];
+                if(arg === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1])
+                        i++;
+                    }
+                } else if(arg === '-u' || arg === '--username'){
+                    if(args[i+1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === 'rid' || arg === '--room-id'){
+                    if(args[i+1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '--from'){
+                    if(args[i+1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '--to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
             }
-        ];
-        return {
-            data: data,
-            format: 'gift-list'
-        };
+
+            params.append('limit', '500');
+            params.append('offset', offset.toString());
+
+            const response = await fetch(`/api/mysterygifts?${params.toString()}`);
+
+            if(!response.ok){
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to fetch mystery gifts');
+            }
+
+            const result = await response.json();
+
+            console.log('API Response:', result);
+            console.log('Mystery Gift count:', result.mystery_gifts?.length)
+
+            const data = result.mystery_gifts.map(gift =>({
+                timestamp: gift.timestamp,
+                username: gift.display_name,
+                room: gift.room_name,
+                type: gift.sup_plan,
+                amount: gift.mass_gift_count
+            }));
+
+            console.log('Formatted data:', data);
+
+            return {
+                data: data,
+                format: 'gift-list'
+            };
+
+        } catch (error) {
+            throw new Error(`Failed to get gift data: ${error.message}`);
+        }
     };
 
-    const handleGetAnnouncement = async (args) => {
-        const data = [
-            {
-                timestamp: '2026-01-15T10:30:00Z',
-                username: 'username1',
-                room: 'room1',
-                systemMessage: 'System message'
-            }
-        ];
+    const handleGetAnnouncement = async (args, offset = 0) => {
+        try {
+            const params = new URLSearchParams();
 
-        return {
-            data: data,
-            format: 'announcement-list'
-        };
+            for(let i = 0; i < args.length; i++){
+                const arg = args[i];
+
+                if(arg === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-u' || arg === '--username'){
+                    if(args[i+1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-rid' || arg === '--room-id'){
+                    if(args[i+1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '--from'){
+                    if(args[i+1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '--to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
+            }
+
+            params.append('limit', '500');
+            params.append('offset', offset.toString());
+
+            const response = await fetch(`/api/announcements?${params.toString()}`);
+
+            if(!response.ok){
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to fetch announcements');
+            }
+
+            const result = await response.json();
+
+            console.log('API Response:', result);
+            console.log('Announcements count:', result.announcements?.length);
+
+            const data = result.announcements.map(announcement => ({
+                timestamp: announcement.timestamp,
+                username: announcement.display_name,
+                room: announcement.room_name,
+                systemMessage: announcement.msg_content
+            }));
+
+            console.log('Formatted data:', data);
+            
+            return {
+                data: data,
+                format: 'announcement-list'
+            };
+
+        } catch (error) {
+            throw new Error(`Failed to get announcement data: ${error.message}`);
+        }
     };
 
-    const handleGetBits = async (args) => {
-        const data = [
-            {
-                timestamp: '2026-01-15T10:30:00Z',
-                username: 'username1',
-                room: 'room1',
-                amount: 5
-            }
-        ];
+    const handleGetBits = async (args, offset = 0) => {
+        try{
+            const params = new URLSearchParams();
 
-        return {
-            data: data,
-            format: 'bits-list'
-        };
+            for(let i = 0; i < args.length; i++){
+                const arg = args[i];
+
+                if(arg === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-u' || arg === '--username'){
+                    if(args[i+1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-rid' || arg === '--room-id'){
+                    if(args[i+1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '--from'){
+                    if(args[i+1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '--to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
+            }
+
+            params.append('limit', '500');
+            params.append('offset', offset.toString());
+
+            const response = await fetch(`/api/bits?${params.toString()}`);
+
+            if(!response.ok){
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to fetch bits data');
+            }
+
+            const result = await response.json();
+
+            console.log('API Response:', result);
+            console.log('Bits count:', result.bits?.length);
+
+            const data = result.bits.map(bit => ({
+                timestamp: bit.timestamp,
+                username: bit.display_name,
+                room: bit.room_name,
+                amount: bit.amount
+            }));
+
+            console.log('Formatted data:', data);
+
+            return {
+                data: data,
+                format: 'bits-list'
+            };
+
+        } catch (error){
+            throw new Error(`Failed to get bits data: ${error.message}`)
+        }
     };
 
-    const handleGetPayforward = async (args) => {
+    const handleGetPayforward = async (args, offset = 0) => {
         const data = [
             {
                 timestamp: '2026-01-15T10:30:00Z',
@@ -450,7 +1098,7 @@ function TerminalView(){
         };
     };
 
-    const handleGetPaidupgrade = async (args) => {
+    const handleGetPaidupgrade = async (args, offset = 0) => {
         const data = [
             {
                 timestamp: '2026-01-15T10:30:00Z',
@@ -467,7 +1115,7 @@ function TerminalView(){
         };
     };
 
-    const handleGetOnetapgift = async (args) => {
+    const handleGetOnetapgift = async (args, offset = 0) => {
         const data = [
             {
                 timestamp: '2026-01-15T10:30:00Z',
@@ -489,40 +1137,44 @@ function TerminalView(){
                 syntax: 'clear',
                 description: 'Clear the terminal screen'
             },
+            'get user': {
+                syntax: 'get user [uname|user-id]',
+                description: 'Fetch information about a specific user by username or user ID'
+            },
             'get users': {
-                syntax: 'get users [room] [from] [to]',
+                syntax: 'get users [room|room-id]',
                 description: ''
             },
             'get messages': {
-                syntax: 'get messages [uname|uid|room] [room] [from] [to]',
+                syntax: 'get messages [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
             'get subs': {
-                syntax: 'get subs [room|uname|uid] [room] [from] [to]',
+                syntax: 'get subs [uname|user-id] [room|room-id] [from] [to]',
                 description: '' 
             },
-            'get gift': {
-                syntax: 'get gift [uname|uid|room] [room] [from] [to]',
+            'get gifts': {
+                syntax: 'get gifts [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
-            'get announcement': {
-                syntax: 'get announcement [uname|uid|room] [room] [from] [to]',
+            'get announcements': {
+                syntax: 'get announcements [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
             'get bits': {
-                syntax: 'get bits [uname|uid|room] [room] [from] [to]',
+                syntax: 'get bits [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
             'get payforward': {
-                syntax: 'get payforward [uname|uid|room] [from] [to]',
+                syntax: 'get payforward [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
             'get paidupgrade': {
-                syntax: 'get paidupgrade [uname|uid] [room] [from] [to]',
+                syntax: 'get paidupgrade [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
             'get onetapgift': {
-                syntax: 'get onetapgift [uname|uid] [room] [from] [to]',
+                syntax: 'get onetapgift [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
             'help': {
@@ -575,13 +1227,12 @@ function TerminalView(){
                         return (
                             <div
                                 key={virtualItem.key}
-                                data-index={virtualItem.index}
-                                ref={virtualizer.measureElement}
                                 style={{
                                     position: 'absolute',
                                     top: 0,
                                     left: 0,
                                     width: '100%',
+                                    height: `${virtualItem.size}px`,
                                     transform: `translateY(${virtualItem.start}px)`
                                 }}
                                 className={`terminal-line ${entry.type}`}
@@ -591,17 +1242,24 @@ function TerminalView(){
                                         [{new Date(entry.timestamp).toLocaleTimeString()}]
                                     </span>
                                 )}
-                                {entry.data ? (
-                                    <div>
-                                        {renderFormattedData(entry.data, entry.format)}
-                                    </div>
-                                ) : (
+                                {entry.content ? (
+                                    entry.content
+                                ) : entry.text ? (
                                     <pre>{entry.text}</pre>
-                                )}
+                                ) : null}
                             </div>
                         );
                     })}
                 </div>
+
+                {paginationState.isLoadingMore && (
+                    <div className="terminal-line loading" style={{
+                        position: 'relative',
+                        padding: '10px 20px'
+                    }}>
+                        Loading data...
+                    </div>
+                )}
             </div>
 
             {loading && <div className="terminal-line loading">Loading...</div>}
@@ -612,6 +1270,7 @@ function TerminalView(){
                 handleSubmit={handleSubmit}
                 handleKeyDown={handleKeyDown}
                 loading={loading}
+                inputRef={inputRef}
             />
         </div>
     );
