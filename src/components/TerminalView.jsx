@@ -210,11 +210,11 @@ function TerminalView(){
                 return await handleGetAnnouncement(args, offset);
             case 'get bits':
                 return await handleGetBits(args, offset);
-            case 'get payforward':
+            case 'get payforwards':
                 return await handleGetPayforward(args, offset);
-            case 'get paidupgrade':
+            case 'get paidupgrades':
                 return await handleGetPaidupgrade(args, offset);
-            case 'get onetapgift':
+            case 'get onetapgifts':
                 return await handleGetOnetapgift(args, offset);
             case 'help':
                 return handleHelp(args);
@@ -325,43 +325,45 @@ function TerminalView(){
                     break;
 
                 case 'payforward-list':
-                    const payforwardText = `${item.timestamp} ${item.username} ${item.room} : ${item.type} ${item.recipient}`;
+                    const payforwardText = `${item.timestamp} ${item.gifter} (gifter) ${item.prior} (prior gifter) ${item.recipient} (recipient) ${item.room} : ${item.systemMessage}`;
                     textLength = payforwardText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="username">{item.username}</span>
+                            <span className="gifter">{item.gifter} (gifter)</span>
+                            {' '}
+                            <span className="prior">{item.prior} (prior gifter)</span>
+                            {' '}
+                            <span className="recipient">{item.recipient} (recipient)</span>
                             {' '}
                             <span className="room">{item.room}</span>
                             {' : '}
-                            <span className="type">{item.type}</span>
-                            {' '}
-                            <span className="recipient">{item.recipient}</span>
+                            <span className="system-message">{item.systemMessage}</span>
                         </>
                     );
                     break;
 
                 case 'paidupgrade-list':
-                    const paidupgradeText = `${item.timestamp} ${item.username} ${item.room} : ${item.type} ${item.recipient}`;
+                    const paidupgradeText = `${item.timestamp} ${item.sender} (sender) ${item.recipient} (recipient) ${item.room} : ${item.type}`;
                     textLength = paidupgradeText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="username">{item.username}</span>
+                            <span className="sender">{item.sender} (sender)</span>
+                            {' '}
+                            <span className="recipient">{item.recipient} (recipient)</span>
                             {' '}
                             <span className="room">{item.room}</span>
                             {' : '}
                             <span className="type">{item.type}</span>
-                            {' '}
-                            <span className="recipient">{item.recipient}</span>
                         </>
                     );
                     break;
                 
                 case 'onetapgift-list':
-                    const onetapgiftText = `${item.timestamp} ${item.username} ${item.room} : ${item.type}`;
+                    const onetapgiftText = `${item.timestamp} ${item.username} ${item.room} : ${item.systemMessage}`;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
@@ -370,7 +372,7 @@ function TerminalView(){
                             {' '}
                             <span className="room">{item.room}</span>
                             {' : '}
-                            <span className="type">{item.type}</span>
+                            <span className="system-message">{item.systemMessage}</span>
                         </>
                     );
                     break;
@@ -541,35 +543,35 @@ function TerminalView(){
                     });
                     break;
 
-                case 'get payforward':
+                case 'get payforwards':
                     result = await handleGetPayforward(args, 0);
                     setPaginationState({
                         hasMore: result.data.length === 500,
                         isLoadingMore: false,
                         currentOffset: 0,
-                        lastCommand: 'get payforward',
+                        lastCommand: 'get payforwards',
                         lastArgs: args
                     });
                     break;
 
-                case 'get paidupgrade':
+                case 'get paidupgrades':
                     result = await handleGetPaidupgrade(args, 0);
                     setPaginationState({
                         hasMore: result.data.length === 500,
                         isLoadingMore: false,
                         currentOffset: 0,
-                        lastCommand: 'get paidupgrade',
+                        lastCommand: 'get paidupgrades',
                         lastArgs: args
                     });
                     break;
 
-                case 'get onetapgift':
+                case 'get onetapgifts':
                     result = await handleGetOnetapgift(args, 0);
                     setPaginationState({
                         hasMore: result.data.length === 500,
                         isLoadingMore: false,
                         currentOffset: 0,
-                        lastCommand: 'get onetapgift',
+                        lastCommand: 'get onetapgifts',
                         lastArgs: args
                     });
                     break;
@@ -1062,7 +1064,7 @@ function TerminalView(){
             console.log('API Response:', result);
             console.log('Bits count:', result.bits?.length);
 
-            const data = result.bits.map(bit => ({
+            const data = result.data.map(bit => ({
                 timestamp: bit.timestamp,
                 username: bit.display_name,
                 room: bit.room_name,
@@ -1082,53 +1084,232 @@ function TerminalView(){
     };
 
     const handleGetPayforward = async (args, offset = 0) => {
-        const data = [
-            {
-                timestamp: '2026-01-15T10:30:00Z',
-                username: 'username1',
-                room: 'room1',
-                type: 'communityPayforward',
-                recipient: 'username2'
-            }
-        ];
+        
+        try {
+            const params = new URLSearchParams();
 
-        return {
-            data: data,
-            format: 'payforward-list'
-        };
+            for(let i = 0; i < args.length; i++) {
+                const arg = args[i];
+
+                if (arg === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-u' || arg === '--username'){
+                    if(args[i+1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-rid' || args === '--room-id'){
+                    if(args[i+1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-from'){
+                    if(args[i+1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
+
+                params.append('limit', '500');
+                params.append('offset', offset.toString());
+
+                const response = await fetch(`/api/payforwards?${params.toString()}`);
+
+                if(!response.ok){
+                    const error = await response.json();
+                    throw new Error(error.message || 'failed to fetch payforward data');
+                }
+
+                const result = await response.json();
+
+                console.log('API Response:', result);
+                console.log('Payforward count:', result.payforwards?.length);
+
+                const data = result.payforwards.map(payforward => ({
+                    timestamp: payforward.timestamp,
+                    gifter: payforward.display_name,
+                    room: payforward.room_name,
+                    systemMessage: payforward.system_msg,
+                    prior: payforward.prior_gifter_display_name,
+                    recipient: payforward.recipient_display_name
+                }));
+
+                console.log('Formatted data:', data);
+
+                return {
+                    data: data,
+                    format: 'payforward-list'
+                }
+            }
+
+        } catch (error) {
+            throw new Error(`Failed to get payforward data: ${error.message}`);
+        }
     };
 
     const handleGetPaidupgrade = async (args, offset = 0) => {
-        const data = [
-            {
-                timestamp: '2026-01-15T10:30:00Z',
-                username: 'username1',
-                room: 'room1',
-                type: 'paidUpgrade',
-                recipient: 'username2'
-            }
-        ];
+        try {
 
-        return {
-            data: data,
-            format: 'paidupgrade-list'
-        };
+            const params = new URLSearchParams();
+
+            for(let i = 0; i < args.length; i++){
+                const arg = args[i];
+
+                if(args === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1]);
+                        i++;
+                    }
+                } else if (arg === '-u' || arg === '--username'){
+                    if(args[i=1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-rid' || arg === '--room-id'){
+                    if(args[i=1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-from'){
+                    if(args[i=1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
+
+                params.append('limit', '500');
+                params.append('offset', offset.toString());
+
+                const response = await fetch(`/api/paidupgrades?${params.toString()}`);
+
+                if(!response.ok){
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to fetch paidupgrade data');
+                }
+
+                const result = await response.json();
+
+                console.log('API Response:', result);
+                console.log('Paidupgrade count:', result.paidupgrades?.length);
+
+                const data = result.paidupgrades.map(paidupgrade => ({
+                    timestamp: paidupgrade.timestamp,
+                    sender: paidupgrade.sender_name,
+                    recipient: paidupgrade.display_name,
+                    room: paidupgrade.room_name,
+                    type: paidupgrade.sub_plan
+                }));
+
+                console.log('Formatted data:', data);
+
+                return {
+                    data: data,
+                    format: 'paidupgrade-list'
+                }
+            }
+
+        } catch (error) {
+            throw new Error(`failed to get paidupgrade data: ${error.message}`);
+        }
     };
 
     const handleGetOnetapgift = async (args, offset = 0) => {
-        const data = [
-            {
-                timestamp: '2026-01-15T10:30:00Z',
-                username: 'username1',
-                room: 'room1',
-                type: 'tier',
-            }
-        ];
+        
+        try {
 
-        return {
-            data: data,
-            format: 'onetapgift-list'
-        };
+            const params = new URLSearchParams();
+
+            for(let i = 0; i < args.length; i++){
+                const arg = args[i];
+
+                if(arg === '-r' || arg === '--room'){
+                    if(args[i+1]){
+                        params.append('room-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-u' || arg === '--username'){
+                    if(args[i+1]){
+                        params.append('user-name', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-rid' || arg === '--room-id'){
+                    if(args[i+1]){
+                        params.append('room-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-uid' || arg === '--user-id'){
+                    if(args[i+1]){
+                        params.append('user-id', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-from'){
+                    if(args[i+1]){
+                        params.append('start-date', args[i+1]);
+                        i++;
+                    }
+                } else if(arg === '-to'){
+                    if(args[i+1]){
+                        params.append('end-date', args[i+1]);
+                        i++;
+                    }
+                }
+
+                params.append('limit', '500');
+                params.append('offset', offset.toString());
+
+                const response = await fetch(`/api/onetapgifts?${params.toString()}`);
+
+                if(!response.ok){
+                    const error = await response.json();
+                    throw new Error(error.message || 'Failed to fetch onetapgift data');
+                }
+
+                const result = await response.json();
+
+                console.log('API Response:', result);
+                console.log('Onetapgift count:', result.onetapgifts?.length);
+
+                const data = result.onetapgifts.map(onetapgift =>({
+                    timestamp: onetapgift.timestamp,
+                    username: onetapgift.display_name,
+                    room: onetapgift.room_name,
+                    systemMessage: onetapgift.system_msg
+                }));
+
+                console.log('Formatted data:', data);
+
+                return {
+                    data: data,
+                    format: 'onetapgift-list'
+                }
+            }
+
+        } catch (error) {
+            throw new Error(`Failed to get onetapgift data: ${error.message}`);
+        }
     };
 
     const handleHelp = (args) => {
@@ -1165,15 +1346,15 @@ function TerminalView(){
                 syntax: 'get bits [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
-            'get payforward': {
+            'get payforwards': {
                 syntax: 'get payforward [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
-            'get paidupgrade': {
+            'get paidupgrades': {
                 syntax: 'get paidupgrade [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
-            'get onetapgift': {
+            'get onetapgifts': {
                 syntax: 'get onetapgift [uname|user-id] [room|room-id] [from] [to]',
                 description: ''
             },
