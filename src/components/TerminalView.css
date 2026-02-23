@@ -45,11 +45,16 @@
 .terminal-line {
     padding: 20px 8px;
     font-family: 'Courier New', monospace;
-    margin-bottom: 0;
+    margin-bottom: 5px;
     line-height: 1.4;
     word-wrap: break-word;
     overflow-wrap: break-word;
     white-space: pre-wrap;
+}
+
+.terminal-line.wrapping {
+    padding-bottom: 10px;
+    margin-bottom: 5px;
 }
 
 .terminal-line.query {
@@ -199,4 +204,58 @@
 .url {
     color: #9cdcfe;
     font-style: italic;
+}
+
+/* onetapgift table */
+.onetap-username, .onetap-room, .onetap-system-message {
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+/* paidupgrade table */
+.pu-sender, .pu-recipient, .pu-room, .pu-type {
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+/* payforward table */
+.pf-gifter, .pf-prior, .pf-recipient, .pf-room, .pf-system-message{
+    font-weight: bold;
+    color:#4ec9b0;
+}
+
+/* bits table */
+.bts-username, .bts-room, .bts-amount {
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+/* announcement table */
+.announce-username, .announce-room, .announce-system-message {
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+/* subgift table */
+.gift-username, .gift-room, .gift-type, .gift-amount {
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+/* sub table */
+.sub-username, .sub-room, .sub-type{
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+/* user table */
+.user-username, .user-user-id{
+    font-weight: bold;
+    color: #4ec9b0;
+}
+
+/* privmsg table */
+.msg-username, .msg-room, .msg-message{
+    font-weight: bold;
+    color: #4ec9b0;
 }

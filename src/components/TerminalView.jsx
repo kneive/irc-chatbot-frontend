@@ -83,8 +83,34 @@ function TerminalView(){
     const virtualizer = useVirtualizer({
         count: entries.length,
         getScrollElement: () => parentRef.current,
-        estimateSize: useCallback(() => 50, []),
-        overscan: 5,
+        estimateSize: useCallback((index) => {
+            
+            const entry = entries[index];
+
+            if(!entry?.unformattedText){
+                return 60;
+            }
+
+            const containerWidth = parentRef.current?.clientWidth || 800;
+            const availableWidth = containerWidth - 56;
+            const charWidth = 8.4;
+            const charsPerLine = Math.floor(availableWidth / charWidth);
+            const lines = Math.ceil(entry.unformattedText.length / charsPerLine);
+            const lineheight = 19.6
+
+            if(lines > 1) {
+                
+                const padding = 40;
+                const marginBottom = 10;
+                return Math.max(80, (lines * lineheight) + padding + marginBottom);
+
+            } else {
+                const padding = 40;
+                const marginBottom = 5;
+                return Math.max(60, lineheight + padding + marginBottom);
+            }
+        }, [entries]),
+        overscan: 10,
         measureElement: (element) => element.getBoundingClientRect().height,
     });
 
@@ -165,6 +191,18 @@ function TerminalView(){
         return () => window.removeEventListener('resize', handleResize);
     }, [virtualizer]);
 
+    useEffect(() => {
+        const resizeObserver = new ResizeObserver(() => {
+            virtualizer.measure();
+        });
+
+        if(parentRef.current) {
+            resizeObserver.observe(parentRef.current);
+        }
+
+        return () => resizeObserver.disconnect();
+    }, [virtualizer]);
+
     const getAPIURL = (path) => {
         const base = backendURL || '';
         return `${base}${path}`;
@@ -237,14 +275,15 @@ function TerminalView(){
     const formatDataItems = (data, format) => {
         return data.flatMap((item, i) => {
             let content;
+            let unformattedText;
             let textLength = 0;
 
             // formatted content
             switch(format) {
 
                 case 'connection-status':
-                    const connectionText = item.message + (item.url ? ` (${item.url})` : '');
-                    textLength = connectionText.length;
+                    unformattedText = item.message + (item.url ? ` (${item.url})` : '');
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="status-message">{item.message}</span>
@@ -259,148 +298,179 @@ function TerminalView(){
                     break;
 
                 case 'message-list':
-                    const messageText = `${item.timestamp} ${item.room} ${item.username} : ${item.message}`;
-                    textLength = messageText.length;
+                    unformattedText = `${item.timestamp} user: ${item.username} - room: ${item.room} - message: ${item.message}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="room">{item.room}</span>
-                            {' '}
-                            <span className="username">{item.username}</span>
-                            {' : '}
-                            <span className="message">{item.message}</span>
+                            <span className="msg-username">user: </span>
+                            {item.username}
+                            {' - '}
+                            <span className="msg-room">room: </span>
+                            {item.room}
+                            {' - '}
+                            <span className="msg-message">message: </span>
+                            {item.message}
                         </>
                     );
                     break;
 
                 case 'user-list':
-                    const userText = `${item.username} : ${item.uid}`;
-                    textLength = userText.length; 
+                    unformattedText = `user: ${item.username} - user-id: ${item.uid}`;
+                    textLength = unformattedText.length; 
                     content = (
                         <>
-                            <span className="username">{item.username}</span>
-                            {' : '}
-                            <span className="uid">{item.uid}</span>
+                            <span className="user-username">user: </span>
+                            {item.username}
+                            {' - '}
+                            <span className="user-user-id">user-id: </span>
+                            {item.uid}
                         </>
                     );
                     break;
 
                 case 'sub-list':
-                    const subText = `${item.timestamp} ${item.username} ${item.room} : ${item.type}`;
-                    textLength = subText.length;
+                    unformattedText = `${item.timestamp} user: ${item.username} - room: ${item.room} - type: ${item.type}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="username">{item.username}</span>
-                            {' '}
-                            <span className="room">{item.room}</span>
-                            {' : '}
-                            <span className="type">{item.type}</span>
+                            <span className="sub-username">user: </span>
+                            {item.username}
+                            {' - '}
+                            <span className="sub-room">room: </span>
+                            {item.room}
+                            {' - '}
+                            <span className="sub-type">type: </span>
+                            {item.type}
                         </>
                     );
                     break;
                 
                 case 'gift-list':
-                    const giftText = `${item.timestamp} ${item.username} ${item.room} : ${item.type} ${item.amount}`;
-                    textLength = giftText.length;
+                    unformattedText = `${item.timestamp} user: ${item.username} - room: ${item.room} - type: ${item.type} - amount: ${item.amount}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="username">{item.username}</span>
+                            <span className="gift-username">user: </span>
+                            {item.username}
                             {' '}
-                            <span className="room">{item.room}</span>
+                            <span className="gift-room">room: </span>
+                            {item.room}
                             {' : '}
-                            <span className="type">{item.type}</span>
+                            <span className="gift-type">type: </span>
+                            {item.type}
                             {' '}
-                            <span className="amount">{item.amount}</span>
+                            <span className="gift-amount">amount:</span>
+                            {item.amount}
                         </>
                     );
                     break;
 
                 case 'announcement-list':
-                    const announcementText = `${item.timestamp} ${item.username} ${item.room} : ${item.systemMessage}`;
-                    textLength = announcementText.length;
+                    unformattedText = `${item.timestamp} user: ${item.username} - room: ${item.room} - system-message: ${item.systemMessage}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                         <span className="timestamp">{item.timestamp}</span>
                         {' '}
-                        <span className="username">{item.username}</span>
-                        {' '}
-                        <span className="room">{item.room}</span>
-                        {' : '}
-                        <span className="system-message">{item.systemMessage}</span>
+                        <span className="announce-username">user: </span>
+                        {item.username}
+                        {' - '}
+                        <span className="announce-room">room: </span>
+                        {item.room}
+                        {' - '}
+                        <span className="announce-system-message">system-message: </span>
+                        {item.systemMessage}
                         </>
                     );
                     break;
 
                 case 'bits-list':
-                    const bitsText = `${item.timestamp} ${item.username} ${item.room} : ${item.amount}`;
-                    textLength = bitsText.length;
+                    unformattedText = `${item.timestamp} user: ${item.username} - room: ${item.room} - amount: ${item.amount}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="username">{item.username}</span>
-                            {' '}
-                            <span className="room">{item.room}</span>
-                            {' : '}
-                            <span className="amount">{item.amount}</span>
+                            <span className="bts-username">user: </span>
+                            {item.username}
+                            {' - '}
+                            <span className="bts-room">room: </span>
+                            {item.room}
+                            {' - '}
+                            <span className="bts-amount">amount: </span>
+                            {item.amount}
                         </>
                     );
                     break;
 
                 case 'payforward-list':
-                    const payforwardText = `${item.timestamp} ${item.gifter} (gifter) ${item.prior} (prior gifter) ${item.recipient} (recipient) ${item.room} : ${item.systemMessage}`;
-                    textLength = payforwardText.length;
+                    unformattedText = `${item.timestamp} gifter: ${item.gifter} - prior gifter: ${item.prior} recipient: ${item.recipient} - room: ${item.room} - system-message: ${item.systemMessage}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="gifter">{item.gifter} (gifter)</span>
-                            {' '}
-                            <span className="prior">{item.prior} (prior gifter)</span>
-                            {' '}
-                            <span className="recipient">{item.recipient} (recipient)</span>
-                            {' '}
-                            <span className="room">{item.room}</span>
-                            {' : '}
-                            <span className="system-message">{item.systemMessage}</span>
+                            <span className="pf-gifter">gifter: </span>
+                            {item.gifter}
+                            {' - '}
+                            <span className="pf-prior">prior gifter: </span>
+                            {item.prior ? item.prior : 'none'}
+                            {' - '}
+                            <span className="pf-recipient">recipient: </span>
+                            {item.recipient ? item.recipient : item.gifter}
+                            {' - '}
+                            <span className="pf-room">room: </span>
+                            {item.room}
+                            {' - '}
+                            <span className="pf-system-message">system-message: </span>
+                            {item.systemMessage}
                         </>
                     );
                     break;
 
                 case 'paidupgrade-list':
-                    const paidupgradeText = `${item.timestamp} ${item.sender} (sender) ${item.recipient} (recipient) ${item.room} : ${item.type}`;
-                    textLength = paidupgradeText.length;
+                    unformattedText = `${item.timestamp} sender: ${item.sender} recipient: ${item.recipient} room: ${item.room} : ${item.type}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="sender">{item.sender} (sender)</span>
-                            {' '}
-                            <span className="recipient">{item.recipient} (recipient)</span>
-                            {' '}
-                            <span className="room">{item.room}</span>
-                            {' : '}
-                            <span className="type">{item.type}</span>
+                            <span className="pu-sender">sender: </span>
+                            {item.sender ? item.sender : 'none'}
+                            {' - '}
+                            <span className="pu-recipient">recipient: </span>
+                            {item.recipient}
+                            {' - '}
+                            <span className="pu-room">room: </span>
+                            {item.room}
+                            {' - '}
+                            <span className="pu-type">type: </span>
+                            {item.type}
                         </>
                     );
                     break;
                 
                 case 'onetapgift-list':
-                    const onetapgiftText = `${item.timestamp} ${item.username} ${item.room} : ${item.systemMessage}`;
+                    unformattedText = `${item.timestamp} ${item.username} ${item.room} : ${item.systemMessage}`;
+                    textLength = unformattedText.length;
                     content = (
                         <>
                             <span className="timestamp">{item.timestamp}</span>
                             {' '}
-                            <span className="username">{item.username}</span>
-                            {' '}
-                            <span className="room">{item.room}</span>
-                            {' : '}
-                            <span className="system-message">{item.systemMessage}</span>
+                            <span className="onetap-username">user: </span>
+                            {item.username}
+                            {' - '}
+                            <span className="onetap-room">room: </span>
+                            {item.room}
+                            {' - '}
+                            <span className="onetap-system-message">system-message: </span>
+                            {item.systemMessage}
                         </>
                     );
                     break;
@@ -450,6 +520,7 @@ function TerminalView(){
             return {
                 type: 'result',
                 content: content,
+                unformattedText: unformattedText,
                 textLength: textLength,
                 timestamp: new Date().toISOString()
             };
@@ -465,7 +536,7 @@ function TerminalView(){
 
         let url = args[0];
 
-        if (!url.startswith('http://') && !url.startsWith('https://')){
+        if (!url.startsWith('http://') && !url.startsWith('https://')){
             url = `http://${url}`;
         }
 
@@ -881,12 +952,12 @@ function TerminalView(){
                         params.append('user-id', args[i+1]);
                         i++
                     }
-                } else if (arg === '--from'){
+                } else if (arg === '-from'){
                     if(args[i+1]){
                         params.append('start-date', args[i+1]);
                         i++;
                     }
-                } else if (arg === '--to'){
+                } else if (arg === '-to'){
                     if(args[i+1]){
                         params.append('end-date', args[i+1]);
                         i++;
@@ -958,12 +1029,12 @@ function TerminalView(){
                         params.append('user-id', args[i+1]);
                         i++;
                     }
-                } else if (arg === '--from'){
+                } else if (arg === '-from'){
                     if(args[i+1]){
                         params.append('start-date', args[i+1]);
                         i++;
                     }
-                } else if(arg === '--to'){
+                } else if(arg === '-to'){
                     if(args[i+1]){
                         params.append('end-date', args[i+1]);
                         i++;
@@ -1036,12 +1107,12 @@ function TerminalView(){
                         params.append('user-id', args[i+1]);
                         i++;
                     }
-                } else if (arg === '--from'){
+                } else if (arg === '-from'){
                     if(args[i+1]){
                         params.append('start-date', args[i+1]);
                         i++;
                     }
-                } else if(arg === '--to'){
+                } else if(arg === '-to'){
                     if(args[i+1]){
                         params.append('end-date', args[i+1]);
                         i++;
@@ -1116,12 +1187,12 @@ function TerminalView(){
                         params.append('user-id', args[i+1]);
                         i++;
                     }
-                } else if(arg === '--from'){
+                } else if(arg === '-from'){
                     if(args[i+1]){
                         params.append('start-date', args[i+1]);
                         i++;
                     }
-                } else if(arg === '--to'){
+                } else if(arg === '-to'){
                     if(args[i+1]){
                         params.append('end-date', args[i+1]);
                         i++;
@@ -1195,12 +1266,12 @@ function TerminalView(){
                         params.append('user-id', args[i+1]);
                         i++;
                     }
-                } else if (arg === '--from'){
+                } else if (arg === '-from'){
                     if(args[i+1]){
                         params.append('start-date', args[i+1]);
                         i++;
                     }
-                } else if(arg === '--to'){
+                } else if(arg === '-to'){
                     if(args[i+1]){
                         params.append('end-date', args[i+1]);
                         i++;
@@ -1221,7 +1292,7 @@ function TerminalView(){
             const result = await response.json();
 
             console.log('API Response:', result);
-            console.log('Bits count:', result.bits?.length);
+            console.log('Bits count:', result.data?.length);
 
             const data = result.data.map(bit => ({
                 timestamp: bit.timestamp,
@@ -1300,9 +1371,9 @@ function TerminalView(){
                 const result = await response.json();
 
                 console.log('API Response:', result);
-                console.log('Payforward count:', result.payforwards?.length);
+                console.log('Payforward count:', result.data?.length);
 
-                const data = result.payforwards.map(payforward => ({
+                const data = result.data.map(payforward => ({
                     timestamp: payforward.timestamp,
                     gifter: payforward.display_name,
                     room: payforward.room_name,
@@ -1381,9 +1452,9 @@ function TerminalView(){
                 const result = await response.json();
 
                 console.log('API Response:', result);
-                console.log('Paidupgrade count:', result.paidupgrades?.length);
+                console.log('Paidupgrade count:', result.data?.length);
 
-                const data = result.paidupgrades.map(paidupgrade => ({
+                const data = result.data.map(paidupgrade => ({
                     timestamp: paidupgrade.timestamp,
                     sender: paidupgrade.sender_name,
                     recipient: paidupgrade.display_name,
@@ -1462,9 +1533,9 @@ function TerminalView(){
                 const result = await response.json();
 
                 console.log('API Response:', result);
-                console.log('Onetapgift count:', result.onetapgifts?.length);
+                console.log('Onetapgift count:', result.data?.length);
 
-                const data = result.onetapgifts.map(onetapgift =>({
+                const data = result.data.map(onetapgift =>({
                     timestamp: onetapgift.timestamp,
                     username: onetapgift.display_name,
                     room: onetapgift.room_name,
