@@ -1,11 +1,4 @@
-.username {
-    color: #4ec9b0;
-    font-weight: bold;
-}
-
-.user-id {
-    color:#dcdcaa;
-}
+/* terminal output styling */
 
 .terminal-container {
     display:flex;
@@ -108,6 +101,27 @@
     font-size: 0.9em;
 }
 
+/* line wrapping */
+
+.message,
+.system-message,
+.username,
+.room,
+.timestamp,
+.type,
+.amount,
+.recipient,
+.uid,
+.command,
+.syntax,
+.description {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+/* terminal input styling */
+
 .terminal-input-form {
     border-top: 1px solid #3c3c3c;
     background-color: #353536;
@@ -146,23 +160,17 @@
     cursor: not-allowed;
 }
 
-.message,
-.system-message,
-.username,
-.room,
-.timestamp,
-.type,
-.amount,
-.recipient,
-.uid,
-.command,
-.syntax,
-.description {
-    word-wrap: break-word;
-    overflow-wrap: break-word;
-    white-space: pre-wrap;
+/* get user / get users output formatting */
+.username {
+    color: #4ec9b0;
+    font-weight: bold;
 }
 
+.user-id {
+    color:#dcdcaa;
+}
+
+/* help command */
 .help-entry {
     margin-bottom: 12px;
 }
@@ -180,4 +188,15 @@
 
 .label {
     color: #9cdcfe;
+}
+
+/* connect disconnect */
+.status-message {
+    color: #4ec9b0;
+    font-weight: bold;
+}
+
+.url {
+    color: #9cdcfe;
+    font-style: italic;
 }

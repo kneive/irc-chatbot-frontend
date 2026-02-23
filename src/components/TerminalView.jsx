@@ -33,13 +33,18 @@ function TerminalView(){
     const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
     const parentRef = useRef(null);
+    
     // focus on input
     const inputRef = useRef(null);
+    
     // history
     const [commandHistory, setCommandHistory] = useState([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
-
-
+    
+    // connection
+    const[backendURL, setBackendURL] = useState(() => {
+        return sessionStorage.getItem('backendURL') || null;
+    });
 
     const [paginationState, setPaginationState] = useState({
         hasMore: false,
@@ -51,7 +56,8 @@ function TerminalView(){
 
     const fetchEntries = async () => {
         try {
-            const response = await fetch('/api/');
+            const url = backendURL ? getAPIURL('/api/'): '/api/';
+            const response = await fetch(url);
 
             if (!response.ok){
                 console.warn(`API returned status ${response.status}`);
@@ -159,6 +165,11 @@ function TerminalView(){
         return () => window.removeEventListener('resize', handleResize);
     }, [virtualizer]);
 
+    const getAPIURL = (path) => {
+        const base = backendURL || '';
+        return `${base}${path}`;
+    };
+
     const loadMoreData = async () => {
         if (!paginationState.hasMore || paginationState.isLoadingMore) {
             return;
@@ -230,6 +241,23 @@ function TerminalView(){
 
             // formatted content
             switch(format) {
+
+                case 'connection-status':
+                    const connectionText = item.message + (item.url ? ` (${item.url})` : '');
+                    textLength = connectionText.length;
+                    content = (
+                        <>
+                            <span className="status-message">{item.message}</span>
+                            {item.url && (
+                                <>
+                                    {' '}
+                                    <span className="url">({item.url})</span>
+                                </>
+                            )}
+                        </>
+                    );
+                    break;
+
                 case 'message-list':
                     const messageText = `${item.timestamp} ${item.room} ${item.username} : ${item.message}`;
                     textLength = messageText.length;
@@ -428,6 +456,77 @@ function TerminalView(){
         });
     };
 
+
+    const handleConnect = async(args) => {
+
+        if (args.length === 0) {
+            throw new Error('Syntax error: The correct syntax is connect <url:port> or connect <ip:port>');
+        }
+
+        let url = args[0];
+
+        if (!url.startswith('http://') && !url.startsWith('https://')){
+            url = `http://${url}`;
+        }
+
+        try {
+
+            new URL(url);
+        
+        } catch (error) {
+
+            throw new Error('Syntax error - invalid URL format: http://host:port or https://host.port')
+        }
+
+        try {
+
+            const response = await fetch(`${url}/api/`);
+            if(!response.ok){
+                throw new Error(`Server responded with status ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            sessionStorage.setItem('backendURL', url);
+            setBackendURL(url);
+
+            return {
+                data: [{
+                    message: `Connected to ${data.message || 'backend'} ${data.version ? 'v' + data.version : ''}`,
+                    url: url
+                }],
+                format: 'connection-status'
+            };
+
+        } catch (error) {
+
+            throw new Error(`Failed to connect to ${url}: ${error.message}`);
+        }
+    } 
+
+    const handleDisconnect = () => {
+
+        sessionStorage.removeItem('backendURL');
+        setBackendURL(null);
+
+        setEntries([]);
+
+        setPaginationState({
+            hasMore: false,
+            isLoadingMore:false,
+            currentOffset: 0,
+            lastCommand: null,
+            lastArgs: null
+        });
+
+        return {
+            data: [{
+                message: 'Disconnected. All Session data cleared.'
+            }],
+            format: 'connection-status'
+        };
+    };
+
     const handleSubmit = useCallback(async (e) => {
         e.preventDefault();
         if (!query.trim()) return;
@@ -448,8 +547,19 @@ function TerminalView(){
         try {
             const command = query.trim().toLowerCase();
             const parts = command.split(' ');
-            const cmd = parts.slice(0, 2).join(' ');
-            const args = parts.slice(2);
+
+            const oneWord = parts[0];
+            const twoWords = parts.slice(0, 2).join(' ');
+
+            let cmd, args;
+
+            if (['connect', 'disconnect', 'clear', 'help'].includes(oneWord)){
+                cmd = oneWord;
+                args = parts.slice(1);
+            } else {
+                cmd = twoWords;
+                args = parts.slice(2);
+            }
 
             let result;
 
@@ -465,6 +575,21 @@ function TerminalView(){
                         lastArgs: null
                     });
                     return;
+
+                case 'connect':
+                    result = await handleConnect(args);
+                    setPaginationState({
+                        hasMore: false,
+                        isLoadingMore: false,
+                        currentOffset: 0,
+                        lastCommand: null,
+                        lastArgs: null
+                    });
+                    break;
+
+                case 'disconnect':
+                    result = handleDisconnect();
+                    break;
 
                 case 'get user':
                     result = await handleGetUser(args);
@@ -633,7 +758,12 @@ function TerminalView(){
     }, [handleSubmit, commandHistory, historyIndex]);
 
     const handleGetUser = async (args) => {
-        try {        
+        try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
+
             const param = new URLSearchParams();
 
             if (args.length === 0) {
@@ -645,7 +775,7 @@ function TerminalView(){
                 param.append('user-name', args[0]);
             }
 
-            const response = await fetch(`/api/users/single?${param.toString()}`);
+            const response = await fetch(getAPIURL(`/api/users/single?${param.toString()}`));
 
             if(!response.ok){
                 const error = await response.json();
@@ -676,6 +806,11 @@ function TerminalView(){
 
     const handleGetUsers = async (args, offset = 0) => {
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
+
             const params = new URLSearchParams();
 
             if(args.length > 0 && args[0]){
@@ -685,7 +820,7 @@ function TerminalView(){
             params.append('limit', '500');
             params.append('offset', offset.toString());
 
-            const response = await fetch(`/api/users?${params.toString()}`);
+            const response = await fetch(getAPIURL(`/api/users?${params.toString()}`));
 
             if(!response.ok){
                 const error = await  response.json();
@@ -716,6 +851,10 @@ function TerminalView(){
 
     const handleGetMessages = async (args, offset = 0) => {
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
 
             const params = new URLSearchParams();
 
@@ -758,7 +897,7 @@ function TerminalView(){
             params.append('limit', '500');
             params.append('offset', offset.toString());
 
-            const response = await fetch(`/api/messages?${params.toString()}`);
+            const response = await fetch(getAPIURL(`/api/messages?${params.toString()}`));
 
             if(!response.ok){
                 const error = await response.json();
@@ -790,6 +929,11 @@ function TerminalView(){
 
     const handleGetSubs = async (args, offset = 0) => {
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
+
             const params = new URLSearchParams();
 
             for(let i = 0; i < args.length; i++){
@@ -830,7 +974,7 @@ function TerminalView(){
             params.append('limit', '500');
             params.append('offset', offset.toString());
 
-            const response = await fetch(`/api/subscriptions?${params.toString()}`);
+            const response = await fetch(getAPIURL(`/api/subscriptions?${params.toString()}`));
 
             if(!response.ok){
                 const error = await response.json();
@@ -863,6 +1007,11 @@ function TerminalView(){
 
     const handleGetGift = async (args, offset = 0) => {
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
+
             const params = new URLSearchParams();
 
             for(let i = 0; i<args.length; i++){
@@ -903,7 +1052,7 @@ function TerminalView(){
             params.append('limit', '500');
             params.append('offset', offset.toString());
 
-            const response = await fetch(`/api/mysterygifts?${params.toString()}`);
+            const response = await fetch(getAPIURL(`/api/mysterygifts?${params.toString()}`));
 
             if(!response.ok){
                 const error = await response.json();
@@ -937,6 +1086,11 @@ function TerminalView(){
 
     const handleGetAnnouncement = async (args, offset = 0) => {
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
+
             const params = new URLSearchParams();
 
             for(let i = 0; i < args.length; i++){
@@ -978,7 +1132,7 @@ function TerminalView(){
             params.append('limit', '500');
             params.append('offset', offset.toString());
 
-            const response = await fetch(`/api/announcements?${params.toString()}`);
+            const response = await fetch(getAPIURL(`/api/announcements?${params.toString()}`));
 
             if(!response.ok){
                 const error = await response.json();
@@ -1011,6 +1165,11 @@ function TerminalView(){
 
     const handleGetBits = async (args, offset = 0) => {
         try{
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
+
             const params = new URLSearchParams();
 
             for(let i = 0; i < args.length; i++){
@@ -1052,7 +1211,7 @@ function TerminalView(){
             params.append('limit', '500');
             params.append('offset', offset.toString());
 
-            const response = await fetch(`/api/bits?${params.toString()}`);
+            const response = await fetch(getAPIURL(`/api/bits?${params.toString()}`));
 
             if(!response.ok){
                 const error = await response.json();
@@ -1086,6 +1245,11 @@ function TerminalView(){
     const handleGetPayforward = async (args, offset = 0) => {
         
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
+
             const params = new URLSearchParams();
 
             for(let i = 0; i < args.length; i++) {
@@ -1126,7 +1290,7 @@ function TerminalView(){
                 params.append('limit', '500');
                 params.append('offset', offset.toString());
 
-                const response = await fetch(`/api/payforwards?${params.toString()}`);
+                const response = await fetch(getAPIURL(`/api/payforwards?${params.toString()}`));
 
                 if(!response.ok){
                     const error = await response.json();
@@ -1162,6 +1326,10 @@ function TerminalView(){
 
     const handleGetPaidupgrade = async (args, offset = 0) => {
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
 
             const params = new URLSearchParams();
 
@@ -1203,7 +1371,7 @@ function TerminalView(){
                 params.append('limit', '500');
                 params.append('offset', offset.toString());
 
-                const response = await fetch(`/api/paidupgrades?${params.toString()}`);
+                const response = await fetch(getAPIURL(`/api/paidupgrades?${params.toString()}`));
 
                 if(!response.ok){
                     const error = await response.json();
@@ -1239,6 +1407,10 @@ function TerminalView(){
     const handleGetOnetapgift = async (args, offset = 0) => {
         
         try {
+
+            if(!backendURL){
+                throw new Error('Not connected to backend. Use: connect <url:port> or connect <ip:port>');
+            }
 
             const params = new URLSearchParams();
 
@@ -1280,7 +1452,7 @@ function TerminalView(){
                 params.append('limit', '500');
                 params.append('offset', offset.toString());
 
-                const response = await fetch(`/api/onetapgifts?${params.toString()}`);
+                const response = await fetch(getAPIURL(`/api/onetapgifts?${params.toString()}`));
 
                 if(!response.ok){
                     const error = await response.json();
@@ -1317,6 +1489,14 @@ function TerminalView(){
             'clear': {
                 syntax: 'clear',
                 description: 'Clear the terminal screen'
+            },
+            'connect' : {
+                syntax: 'connect [<url:port>|<ip:port>]',
+                description: 'Connect to a backend server.'
+            },
+            'disconnect': {
+                syntax: 'disconnect',
+                description: 'Disconnect from a backend server.'
             },
             'get user': {
                 syntax: 'get user [uname|user-id]',
