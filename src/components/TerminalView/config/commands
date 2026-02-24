@@ -1,0 +1,58 @@
+export const COMMANDS = {
+    'clear': {
+        syntax: 'clear',
+        description: 'Clear the terminal screen'
+    },
+    'connect' : {
+        syntax: 'connect [<url:port>|<ip:port>]',
+        description: 'Connect to a backend server.'
+    },
+    'disconnect': {
+        syntax: 'disconnect',
+        description: 'Disconnect from a backend server.'
+    },
+    'get user': {
+        syntax: 'get user [uname|user-id]',
+        description: 'Fetch information about a specific user by username or user ID'
+    },
+    'get users': {
+        syntax: 'get users [room|room-id]',
+        description: ''
+    },
+    'get messages': {
+        syntax: 'get messages [uname|user-id] [room|room-id] [from] [to]',
+        description: ''
+    },
+    'get subs': {
+        syntax: 'get subs [uname|user-id] [room|room-id] [from] [to]',
+        description: '' 
+    },
+    'get gifts': {
+        syntax: 'get gifts [uname|user-id] [room|room-id] [from] [to]',
+        description: ''
+    },
+    'get announcements': {
+        syntax: 'get announcements [uname|user-id] [room|room-id] [from] [to]',
+        description: ''
+    },
+    'get bits': {
+        syntax: 'get bits [uname|user-id] [room|room-id] [from] [to]',
+        description: ''
+    },
+    'get payforwards': {
+        syntax: 'get payforward [uname|user-id] [room|room-id] [from] [to]',
+        description: ''
+    },
+    'get paidupgrades': {
+        syntax: 'get paidupgrade [uname|user-id] [room|room-id] [from] [to]',
+        description: ''
+    },
+    'get onetapgifts': {
+        syntax: 'get onetapgift [uname|user-id] [room|room-id] [from] [to]',
+        description: ''
+    },
+    'help': {
+        syntax: 'help [cmd]',
+        description: ''
+    }
+};
